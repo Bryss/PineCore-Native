@@ -14,9 +14,10 @@
 >   (flood advert + private-channel message at 10 dBm) completed by the radio; it returns to RX;
 >   live retune; out-of-band frequencies refused; name/identity/radio settings persist across restarts
 > - idle CPU about 5% and RAM about 1 MB (measured)
+> - the MeshCore phone app connects over TCP, channels work and battery % shows (one user, one phone)
 >
-> Not verified: receiving real packets, interop with real nodes, the MeshCore phone app against
-> this build, actual RF output and antenna path, and long-term stability. Check your radio settings
+> Not verified: receiving real packets, interop with real nodes, actual RF output and antenna path,
+> and long-term stability. Check your radio settings
 > are legal before transmitting. Use at your own risk; no support, no warranty.
 
 ## What it is
