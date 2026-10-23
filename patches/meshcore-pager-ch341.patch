@@ -14,12 +14,59 @@ index db4846b8..fdd6955c 100644
  #endif
  
 diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
-index 46c8e2f6..e8c63939 100644
+index 46c8e2f6..29a1c48e 100644
 --- a/examples/companion_radio/MyMesh.cpp
 +++ b/examples/companion_radio/MyMesh.cpp
-@@ -1,5 +1,12 @@
+@@ -1,5 +1,59 @@
  #include "MyMesh.h"
  
++#ifdef PAGER_CH341
++#include <stdio.h>
++
++static void jsonString(FILE *f, const char *s) {
++  fputc('"', f);
++  for (; *s; s++) {
++    unsigned char c = (unsigned char)*s;
++    if (c == '"' || c == '\\') fprintf(f, "\\%c", c);
++    else if (c < 0x20) fprintf(f, "\\u%04x", c);
++    else fputc(c, f);
++  }
++  fputc('"', f);
++}
++
++void MyMesh::writePagerStatus(const char *path) {
++  char tmp[96];
++  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
++  FILE *f = fopen(tmp, "w");
++  if (!f) return;
++  char key[PUB_KEY_SIZE * 2 + 1];
++  for (int i = 0; i < PUB_KEY_SIZE; i++) snprintf(&key[i * 2], 3, "%02x", self_id.pub_key[i]);
++  int channels = 0;
++  ChannelDetails ch;
++  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
++    if (getChannel(i, ch) && ch.name[0]) channels++;
++  }
++  fprintf(f, "{\"name\":");
++  jsonString(f, _prefs.node_name);
++  fprintf(f, ",\"public_key\":\"%s\",\"freq\":%.3f,\"bw\":%.1f,\"sf\":%d,\"cr\":%d,\"tx_power\":%d,"
++             "\"uptime\":%lu,\"app_connected\":%s,\"contacts\":%d,\"max_contacts\":%d,\"channels\":%d,"
++             "\"queued\":%d,\"noise_floor\":%d,\"last_rssi\":%d,\"last_snr\":%.2f,"
++             "\"recv\":%lu,\"sent\":%lu,\"flood_rx\":%lu,\"direct_rx\":%lu,\"flood_tx\":%lu,\"direct_tx\":%lu,"
++             "\"recv_errors\":%lu,\"tx_air_secs\":%lu,\"battery_mv\":%u,\"updated\":%lu}\n",
++          key, _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm,
++          (unsigned long)(_ms->getMillis() / 1000), (_serial && _serial->isConnected()) ? "true" : "false",
++          getNumContacts(), MAX_CONTACTS, channels, offline_queue_len,
++          (int)_radio->getNoiseFloor(), (int)radio_driver.getLastRSSI(), radio_driver.getLastSNR(),
++          (unsigned long)radio_driver.getPacketsRecv(), (unsigned long)radio_driver.getPacketsSent(),
++          (unsigned long)getNumRecvFlood(), (unsigned long)getNumRecvDirect(),
++          (unsigned long)getNumSentFlood(), (unsigned long)getNumSentDirect(),
++          (unsigned long)radio_driver.getPacketsRecvErrors(), (unsigned long)(getTotalAirTime() / 1000),
++          (unsigned)board.getBattMilliVolts(), (unsigned long)getRTCClock()->getCurrentTime());
++  fclose(f);
++  rename(tmp, path);
++}
++#endif
++
 +#ifndef RADIO_FREQ_MIN_KHZ
 +  #define RADIO_FREQ_MIN_KHZ 150000
 +#endif
@@ -30,7 +77,7 @@ index 46c8e2f6..e8c63939 100644
  #include <Arduino.h> // needed for PlatformIO
  #include <Mesh.h>
  
-@@ -1012,6 +1019,13 @@ void MyMesh::begin(bool has_display) {
+@@ -1012,6 +1066,13 @@ void MyMesh::begin(bool has_display) {
    _prefs.direct_tx_delay_factor = constrain(_prefs.direct_tx_delay_factor, 0, 2.0f);
    _prefs.airtime_factor = constrain(_prefs.airtime_factor, 0, 9.0f);
    _prefs.freq = constrain(_prefs.freq, 150.0f, 2500.0f);
@@ -44,7 +91,7 @@ index 46c8e2f6..e8c63939 100644
    _prefs.bw = constrain(_prefs.bw, 7.8f, 500.0f);
    _prefs.sf = constrain(_prefs.sf, 5, 12);
    _prefs.cr = constrain(_prefs.cr, 5, 8);
-@@ -1479,7 +1493,7 @@ void MyMesh::handleCmdFrame(size_t len) {
+@@ -1479,7 +1540,7 @@ void MyMesh::handleCmdFrame(size_t len) {
  
      if (repeat && !isValidClientRepeatFreq(freq)) {
        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
@@ -53,6 +100,39 @@ index 46c8e2f6..e8c63939 100644
          bw <= 500000) {
        _prefs.sf = sf;
        _prefs.cr = cr;
+diff --git a/examples/companion_radio/MyMesh.h b/examples/companion_radio/MyMesh.h
+index 4b449128..a53cd75f 100644
+--- a/examples/companion_radio/MyMesh.h
++++ b/examples/companion_radio/MyMesh.h
+@@ -106,6 +106,10 @@ public:
+   const char *getNodeName();
+   NodePrefs *getNodePrefs();
+   uint32_t getBLEPin();
++#ifdef PAGER_CH341
++  // Snapshot of node state for the Pager payload's Status screen.
++  void writePagerStatus(const char *path);
++#endif
+ 
+   void loop();
+   void handleCmdFrame(size_t len);
+diff --git a/examples/companion_radio/main.cpp b/examples/companion_radio/main.cpp
+index 2234d168..005df520 100644
+--- a/examples/companion_radio/main.cpp
++++ b/examples/companion_radio/main.cpp
+@@ -282,6 +282,13 @@ void setup() {
+ 
+ void loop() {
+   the_mesh.loop();
++#ifdef PAGER_CH341
++  static unsigned long last_status = 0;
++  if (last_status == 0 || millis() - last_status >= 10000) {
++    the_mesh.writePagerStatus("/tmp/meshcored-status.json");
++    last_status = millis();
++  }
++#endif
+   interface_manager.loop();
+   sensors.loop();
+ #ifdef DISPLAY_CLASS
 diff --git a/variants/linux/LinuxBoard.cpp b/variants/linux/LinuxBoard.cpp
 index 0c320f24..8a274cae 100644
 --- a/variants/linux/LinuxBoard.cpp

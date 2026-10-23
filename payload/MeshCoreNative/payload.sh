@@ -193,19 +193,59 @@ boot_off() {
   LOG 'Enable at Boot: OFF. Manual Start still works.'
 }
 
+STATUS_JSON='/tmp/meshcored-status.json'
+BATTERY='/sys/class/power_supply/bq27546-0'
+
+sj() { jsonfilter -i "$STATUS_JSON" -e "@.$1" 2>/dev/null; }
+
+# Average CPU of a PID over one second, from /proc/<pid>/stat utime+stime.
+cpu_percent() {
+  local a b
+  a="$(awk '{print $14 + $15}' "/proc/$1/stat" 2>/dev/null)" || return 1
+  sleep 1
+  b="$(awk '{print $14 + $15}' "/proc/$1/stat" 2>/dev/null)" || return 1
+  echo $((b - a))
+}
+
 show_status() {
-  local pid lines key
+  local pid lines key up age recv cpu rss now
   pid="$(running_pid)"
-  if [ -n "$pid" ]; then lines="Running (PID $pid) on $PAGER_IP:$PORT"; else lines='Stopped'; fi
-  installed || lines="$lines
+  now="$(date +%s)"
+  if [ -n "$pid" ] && [ -f "$STATUS_JSON" ]; then
+    up="$(sj uptime)"
+    age=$((now - $(sj updated || echo 0)))
+    recv="$(sj recv)"
+    cpu="$(cpu_percent "$pid" || echo '?')"
+    rss="$(awk '/^VmRSS/ {print $2}' "/proc/$pid/status" 2>/dev/null)"
+    lines="MeshCore: RUNNING  pid $pid
+Name: $(sj name)
+App: $( [ "$(sj app_connected)" = true ] && echo connected || echo 'not connected') ($PAGER_IP:$PORT)
+Radio: $(sj freq | awk '{printf "%.3f", $1}') MHz BW$(sj bw | awk '{printf "%g", $1}') SF$(sj sf) CR$(sj cr)
+TX power: $(sj tx_power) dBm
+Contacts: $(sj contacts)/$(sj max_contacts)  Channels: $(sj channels)
+Queued msgs: $(sj queued)
+RX: $recv pkts (flood $(sj flood_rx), direct $(sj direct_rx), err $(sj recv_errors))
+TX: $(sj sent) pkts (flood $(sj flood_tx), direct $(sj direct_tx)), $(sj tx_air_secs)s air
+Noise floor: $(sj noise_floor) dBm"
+    [ "${recv:-0}" -gt 0 ] && lines="$lines
+Last RX: RSSI $(sj last_rssi) dBm, SNR $(sj last_snr | awk '{printf "%.1f", $1}') dB"
+    lines="$lines
+Uptime: $((up / 3600))h $((up % 3600 / 60))m  CPU ${cpu}%  RAM ${rss:-?} KB"
+    [ "$age" -le 30 ] || lines="$lines
+(stats ${age}s old)"
+  elif [ -n "$pid" ]; then
+    lines="MeshCore: RUNNING  pid $pid
+(waiting for first stats)"
+  else
+    lines='MeshCore: STOPPED'
+    installed || lines="$lines
 Not installed"
+  fi
   if key="$(public_key)"; then lines="$lines
 Key: $(printf '%s' "$key" | cut -c1-16)..."; fi
-  if boot_enabled; then lines="$lines
-Boot: ON"; else lines="$lines
-Boot: OFF"; fi
   lines="$lines
-Mesh Mod attached: $(mesh_mod_count)"
+Battery: $(cat "$BATTERY/capacity" 2>/dev/null)% $(cat "$BATTERY/status" 2>/dev/null), $(($(cat "$BATTERY/voltage_now" 2>/dev/null || echo 0) / 1000)) mV
+Mesh Mod: $( [ "$(mesh_mod_count)" -gt 0 ] && echo attached || echo 'NOT attached')  Boot: $(boot_enabled && echo ON || echo OFF)"
   printf '%s\n' "$lines" | while IFS= read -r l; do LOG "$l"; done
   [ "$INTERACTIVE" -eq 0 ] || PROMPT "$lines" >/dev/null 2>&1 || true
 }

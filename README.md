@@ -18,10 +18,11 @@ delivery ACKs, channels, an offline message queue, and the same firmware code re
 > - 16 protocol/hardware checks via the `meshcore` Python client: two transmissions (flood advert +
 >   private-channel message at 10 dBm) completed by the radio; it returns to RX; live retune;
 >   out-of-band frequencies refused; name, identity and radio settings persist across restarts
+> - identity persists: same public key across repeated restarts (the patched upstream bug)
 > - idle CPU about 5% and RAM about 1 MB (measured); the Pager kept charging on laptop USB while it ran
 >
 > Not verified: receiving real packets, interop with real nodes, actual RF output and antenna path,
-> which E22 variant the Mod uses, long-term stability. Check your radio settings are legal where you
+> which E22 variant the Mod uses (not detectable from software; see TX power below), long-term stability. Check your radio settings are legal where you
 > are before transmitting. Use at your own risk; no support, no warranty.
 
 ```
@@ -62,10 +63,26 @@ IRQ poll interval vs CPU for this build (`MESHCORED_IRQ_POLL_MS`):
 
 `meshcore-cli` works too: `meshcore-cli -t 172.16.52.1 -p 5000 infos`.
 
-**First-boot defaults:** EU/UK (Narrow) 869.618 MHz / BW 62.5 / SF8 / CR8, **22 dBm**, and, as with
-upstream companion firmware, **one advert at boot**. If your Mod is a high-power E22-…M30S, 22 dBm on
-the chip is about 30 dBm out, so lower it in the app (EU 869.4–869.65 MHz allows 500 mW ERP). Outside
-Europe, change the region in the app before you rely on it.
+**First-boot defaults:** EU/UK (Narrow) 869.618 MHz / BW 62.5 / SF8 / CR8, **18 dBm** (app maximum
+22), and, as with upstream companion firmware, **one advert at boot**. Outside Europe, change the
+region in the app before you rely on it.
+
+### TX power and which E22 you have
+
+The Mesh Mod's E22 variant **can't be detected from software**: an E22-900M30S is the same SX1262 plus
+an external PA behind the same RF-switch lines, and no register reveals it. Glytch's Meshtastic profile
+declares no PA gain either. **Open the Mod and read the module's shield**: `E22-900M22S` (small, about
+14 × 20 mm) or `E22-900M30S` (larger, about 24 × 38.5 mm). The power setting is the *chip's*; what
+leaves the antenna depends on the module:
+
+| Chip setting | E22-900M22S out | E22-900M30S out (about +8 dB PA) | EU 869.4–869.65 limit |
+|---|---|---|---|
+| **18 dBm (default)** | 18 dBm (63 mW) | ~26 dBm (~400 mW) | ✅ both, with an antenna ≤ 3 dBi |
+| 22 dBm (max) | 22 dBm (158 mW) | ~30 dBm (~1 W) | ✅ M22S / ❌ M30S |
+
+EU limit: 500 mW **ERP** (27 dBm ERP; ERP = output + antenna dBi − 2.15) at ≤ 10% duty cycle. The PA
+gain figures are datasheet-level approximations. With an M22S you can safely raise it to 22 in the app.
+If you have a 33 dBm-class module, stay at or below 15.
 
 ### Payload menu
 
@@ -73,7 +90,7 @@ Europe, change the region in the app before you rely on it.
 |---|---|
 | Start server / Stop server | run or stop `meshcored` (procd-supervised, auto-respawn) |
 | Show contact QR | a `meshcore://contact/add…` QR (from the stored public key) to scan in the app |
-| Status | running state, key, boot setting, Mesh Mod detection |
+| Status | live node state: name, app connected, radio, TX power, contacts/channels, queued messages, RX/TX packet counters and airtime, noise floor, last RX RSSI/SNR, uptime, CPU/RAM, battery, Mod and boot |
 | Install / Update | verifies `SHA256SUMS`, installs `/usr/bin/meshcored` and the init script; keeps state and config |
 | Enable at Boot | default OFF |
 | Uninstall | removes the binary and service; keeps identity, contacts and `/etc/meshcored/meshcored.ini` |
@@ -87,6 +104,7 @@ Command line: `payload.sh --install | --start | --stop | --status | --qr | --boo
 | `/usr/bin/meshcored` | the daemon (static MIPS binary) |
 | `/etc/meshcored/meshcored.ini` | hardware config: CH341 pins, TCXO, RF switch, TCP port/bind |
 | `/root/.meshcored/` | node state on the eMMC: identity, prefs, contacts, channels |
+| `/tmp/meshcored-status.json` | live stats, rewritten every 10 s (what Status shows) |
 | `/etc/init.d/meshcored`, `/etc/config/meshcored` | procd service and the boot setting |
 
 Logs: `logread | grep meshcored`. Only one of Meshtastic, PineCore and this can own the Mesh Mod at a
@@ -106,10 +124,11 @@ USB-to-SPI bridge**. This repo adds:
   detaches the Pager's `mphsi-ch34x` kernel driver and claims the bridge. The CH341 has no interrupt
   line, so IRQs come from a poll thread (20 ms); the SX1262 latches DIO1 until cleared, so slower polling
   adds latency but loses nothing.
-- **`patches/meshcore-pager-ch341.patch`, 60 lines on upstream:**
+- **`patches/meshcore-pager-ch341.patch`, a small patch on upstream:**
   - `PAGER_CH341` board path: open the CH341 instead of spidev/gpiod; battery from the Pager's bq27546 fuel gauge
   - an 850–930 MHz band guard in the companion (and on load), since the chip tunes 150–960 MHz but this module's RF path doesn't
   - **upstream bug fix:** the companion never created `/identity` on Linux, so every restart produced a new node identity
+  - a status snapshot (`/tmp/meshcored-status.json`) for the Pager's Status screen
 - **`compat/argp.h`**: a small getopt-based argp, since musl has none.
 - **A cross-build** (Makefile + the official OpenWrt 24.10.1 SDK in Docker) that reproduces
   meshcore-linux's PlatformIO `linux` env for mipsel_24kc/musl, statically linked with libusb.
