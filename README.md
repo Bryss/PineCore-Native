@@ -22,7 +22,7 @@ delivery ACKs, channels, an offline message queue, and the same firmware code re
 > - idle CPU about 5% and RAM about 1 MB (measured); the Pager kept charging on laptop USB while it ran
 >
 > Not verified: receiving real packets, interop with real nodes, actual RF output and antenna path,
-> which E22 variant the Mod uses (not detectable from software; see TX power below), long-term stability. Check your radio settings are legal where you
+> long-term stability. The radio module was identified physically as an **E22-900M22S** (22 dBm max). Check your radio settings are legal where you
 > are before transmitting. Use at your own risk; no support, no warranty.
 
 ```
@@ -63,26 +63,27 @@ IRQ poll interval vs CPU for this build (`MESHCORED_IRQ_POLL_MS`):
 
 `meshcore-cli` works too: `meshcore-cli -t 172.16.52.1 -p 5000 infos`.
 
-**First-boot defaults:** EU/UK (Narrow) 869.618 MHz / BW 62.5 / SF8 / CR8, **18 dBm** (app maximum
-22), and, as with upstream companion firmware, **one advert at boot**. Outside Europe, change the
+**First-boot defaults:** EU/UK (Narrow) 869.618 MHz / BW 62.5 / SF8 / CR8, **22 dBm**, and, as with
+upstream companion firmware, **one advert at boot**. Outside Europe, change the
 region in the app before you rely on it.
 
 ### TX power and which E22 you have
 
-The Mesh Mod's E22 variant **can't be detected from software**: an E22-900M30S is the same SX1262 plus
-an external PA behind the same RF-switch lines, and no register reveals it. Glytch's Meshtastic profile
-declares no PA gain either. **Open the Mod and read the module's shield**: `E22-900M22S` (small, about
-14 × 20 mm) or `E22-900M30S` (larger, about 24 × 38.5 mm). The power setting is the *chip's*; what
-leaves the antenna depends on the module:
+**The Glytch Mesh Mod uses an Ebyte E22-900M22S** (read off the module's shield on one unit). It
+has no external PA, so the chip setting *is* the output: 22 dBm max = 158 mW, well within EU
+limits. The variant **can't be detected from software** (an E22-900M30S is the same SX1262 plus an
+external PA, and no register reveals it), so if you've modded or swapped your module, read its
+shield: `E22-900M22S` (small, about 14 × 20 mm) or `E22-900M30S` (larger, about 24 × 38.5 mm). What leaves
+the antenna depends on the module:
 
 | Chip setting | E22-900M22S out | E22-900M30S out (about +8 dB PA) | EU 869.4–869.65 limit |
 |---|---|---|---|
-| **18 dBm (default)** | 18 dBm (63 mW) | ~26 dBm (~400 mW) | ✅ both, with an antenna ≤ 3 dBi |
-| 22 dBm (max) | 22 dBm (158 mW) | ~30 dBm (~1 W) | ✅ M22S / ❌ M30S |
+| 18 dBm | 18 dBm (63 mW) | ~26 dBm (~400 mW) | ✅ both, with an antenna ≤ 3 dBi |
+| **22 dBm (default, max)** | 22 dBm (158 mW) | ~30 dBm (~1 W) | ✅ M22S / ❌ M30S |
 
 EU limit: 500 mW **ERP** (27 dBm ERP; ERP = output + antenna dBi − 2.15) at ≤ 10% duty cycle. The PA
-gain figures are datasheet-level approximations. With an M22S you can safely raise it to 22 in the app.
-If you have a 33 dBm-class module, stay at or below 15.
+gain figures are datasheet-level approximations. If your module turns out to be an M30S, set 18 or
+lower in the app; for a 33 dBm-class module, stay at or below 15.
 
 ### Payload menu
 
