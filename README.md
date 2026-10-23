@@ -153,7 +153,13 @@ one advert and one private-channel message at 10 dBm.
 
 This was built in one sitting to get MeshCore running on the Pager properly. It's here to get the
 community going: **fork it, improve it, break it, send PRs**, or just open an issue with what you
-saw on your hardware. Useful directions:
+saw on your hardware.
+
+> [!NOTE]
+> This repo isn't actively maintained. Issues and PRs are welcome but may go unanswered, so if you
+> want to take it further, **your fork is the best place to do it**. Link it in an issue so others can find it.
+
+Useful directions:
 
 - **Real-world testing.** The biggest gap. If you have a Pager, a Mesh Mod and MeshCore nodes nearby,
   report back: adverts heard both ways, DMs delivered with ACKs, range, stability over days.
