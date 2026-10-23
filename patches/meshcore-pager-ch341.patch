@@ -1,0 +1,148 @@
+diff --git a/examples/companion_radio/DataStore.cpp b/examples/companion_radio/DataStore.cpp
+index db4846b8..fdd6955c 100644
+--- a/examples/companion_radio/DataStore.cpp
++++ b/examples/companion_radio/DataStore.cpp
+@@ -49,7 +49,9 @@ static File openWrite(FILESYSTEM* fs, const char* filename) {
+ #endif
+ 
+ void DataStore::begin() {
+-#if defined(RP2040_PLATFORM)
++#if defined(RP2040_PLATFORM) || defined(ARDULINUX_PLATFORM)
++  // Real directory-based filesystem: /identity must exist before _main.id
++  // can be saved, or the node gets a new identity on every start.
+   identity_store.begin();
+ #endif
+ 
+diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
+index 46c8e2f6..e8c63939 100644
+--- a/examples/companion_radio/MyMesh.cpp
++++ b/examples/companion_radio/MyMesh.cpp
+@@ -1,5 +1,12 @@
+ #include "MyMesh.h"
+ 
++#ifndef RADIO_FREQ_MIN_KHZ
++  #define RADIO_FREQ_MIN_KHZ 150000
++#endif
++#ifndef RADIO_FREQ_MAX_KHZ
++  #define RADIO_FREQ_MAX_KHZ 2500000
++#endif
++
+ #include <Arduino.h> // needed for PlatformIO
+ #include <Mesh.h>
+ 
+@@ -1012,6 +1019,13 @@ void MyMesh::begin(bool has_display) {
+   _prefs.direct_tx_delay_factor = constrain(_prefs.direct_tx_delay_factor, 0, 2.0f);
+   _prefs.airtime_factor = constrain(_prefs.airtime_factor, 0, 9.0f);
+   _prefs.freq = constrain(_prefs.freq, 150.0f, 2500.0f);
++#if defined(RADIO_FREQ_MIN_KHZ) && defined(RADIO_FREQ_MAX_KHZ)
++  // The board's RF front end is only matched for this band; fall back to the
++  // build default rather than run (or transmit) far outside it.
++  if (_prefs.freq * 1000.0f < RADIO_FREQ_MIN_KHZ || _prefs.freq * 1000.0f > RADIO_FREQ_MAX_KHZ) {
++    _prefs.freq = LORA_FREQ;
++  }
++#endif
+   _prefs.bw = constrain(_prefs.bw, 7.8f, 500.0f);
+   _prefs.sf = constrain(_prefs.sf, 5, 12);
+   _prefs.cr = constrain(_prefs.cr, 5, 8);
+@@ -1479,7 +1493,7 @@ void MyMesh::handleCmdFrame(size_t len) {
+ 
+     if (repeat && !isValidClientRepeatFreq(freq)) {
+       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+-    } else if (freq >= 150000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
++    } else if (freq >= RADIO_FREQ_MIN_KHZ && freq <= RADIO_FREQ_MAX_KHZ && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
+         bw <= 500000) {
+       _prefs.sf = sf;
+       _prefs.cr = cr;
+diff --git a/variants/linux/LinuxBoard.cpp b/variants/linux/LinuxBoard.cpp
+index 0c320f24..8a274cae 100644
+--- a/variants/linux/LinuxBoard.cpp
++++ b/variants/linux/LinuxBoard.cpp
+@@ -42,8 +42,13 @@ int initGPIOPin(uint8_t pinNum, const std::string gpioChipName, uint8_t line)
+ void ardulinuxSetup() {
+ }
+ 
++#ifdef PAGER_CH341
++#include <CH341Hal.h>
++extern CH341Hal ch341_hal;
++#endif
++
+ void LinuxBoard::begin() {
+-#ifndef ARDULINUX_HARDWARE
++#if !defined(ARDULINUX_HARDWARE) && !defined(PAGER_CH341)
+   printf("FATAL: meshcored was built without libgpiod support; all GPIO/I2C\n"
+          "       operations would be simulated and the radio cannot be driven.\n"
+          "       Install pkg-config and libgpiod-dev on the build machine, clear\n"
+@@ -58,6 +63,20 @@ void LinuxBoard::begin() {
+     fprintf(stderr, "warning: /etc/meshcored/meshcored.ini not found, using built-in defaults\n");
+   }
+ 
++#ifdef PAGER_CH341
++  // The radio sits behind a CH341 USB-SPI bridge: SPI and every LoRa pin
++  // (NSS/BUSY/IRQ/RESET/RXEN as CH341 D0..D7) go through CH341Hal over libusb.
++  printf("CH341 open %04x:%04x\n", CH341Hal::VID, CH341Hal::PID);
++  if (!ch341_hal.open()) {
++    printf("FATAL: cannot open the Mesh Mod's CH341 bridge; is it attached and free?\n");
++    exit(1);
++  }
++  printf("LoRa pins (CH341) NSS=%d BUSY=%d IRQ=%d RESET=%d TX=%d RX=%d\n",
++         (int)config.lora_nss_pin, (int)config.lora_busy_pin, (int)config.lora_irq_pin,
++         (int)config.lora_reset_pin, (int)config.lora_txen_pin, (int)config.lora_rxen_pin);
++  return;
++#endif
++
+   printf("SPI begin %s\n", config.spidev);
+   SPI.begin(config.spidev, 2000000);
+ 
+diff --git a/variants/linux/LinuxBoard.h b/variants/linux/LinuxBoard.h
+index e7bb2461..ff7e9a90 100644
+--- a/variants/linux/LinuxBoard.h
++++ b/variants/linux/LinuxBoard.h
+@@ -61,13 +61,28 @@ public:
+   void begin();
+ 
+   uint16_t getBattMilliVolts() override {
++#ifdef PAGER_CH341
++    // Pineapple Pager fuel gauge (bq27546), microvolts.
++    FILE *f = fopen("/sys/class/power_supply/bq27546-0/voltage_now", "r");
++    long uv = 0;
++    if (f) {
++      if (fscanf(f, "%ld", &uv) != 1) uv = 0;
++      fclose(f);
++    }
++    return (uint16_t)(uv / 1000);
++#else
+     return 0;
++#endif
+   }
+ 
+   uint8_t getStartupReason() const override { return startup_reason; }
+ 
+   const char* getManufacturerName() const override {
++#ifdef PAGER_CH341
++    return "WiFi Pineapple Pager";
++#else
+     return "Linux";
++#endif
+   }
+ 
+   int buttonStateChanged() {
+diff --git a/variants/linux/target.cpp b/variants/linux/target.cpp
+index 41609fc3..08cc5f4d 100644
+--- a/variants/linux/target.cpp
++++ b/variants/linux/target.cpp
+@@ -13,8 +13,15 @@ public:
+ 
+ LinuxBoard board;
+ 
++#ifdef PAGER_CH341
++#include <CH341Hal.h>
++// Glytch Mesh Mod: SX1262 behind a CH341 USB-SPI bridge, driven over libusb.
++CH341Hal ch341_hal;
++RadioLibHal *hal = &ch341_hal;
++#else
+ SPISettings spiSettings = SPISettings(2000000, MSBFIRST, SPI_MODE0);
+ ArduinoHal *hal = new ArduLinuxHal(SPI, spiSettings);
++#endif
+ RADIO_CLASS radio = new Module(hal, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
+ WRAPPER_CLASS radio_driver(radio, board);
+ 
